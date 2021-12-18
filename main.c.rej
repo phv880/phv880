@@ -1,0 +1,69 @@
+--- main.c
++++ main.c
+@@ -81,6 +81,7 @@ struct {
+     const char *pwprompt;
+     int verbose;
+     char *orig_password;
++    char *duo_option;
+ } args;
+ 
+ static void show_help()
+@@ -95,6 +96,7 @@ static void show_help()
+             "   -v            Be verbose about what you're doing\n"
+             "   -h            Show help (this screen)\n"
+             "   -V            Print version information\n"
++            "   -o number     Option to select at a DUO prompt (defaults to 1)\n"
+             "At most one of -f, -d, -p or -e should be used\n");
+ }
+ 
+@@ -108,6 +110,7 @@ static int parse_options( int argc, char *argv[] )
+     // Set the default password source to stdin
+     args.pwtype=PWT_STDIN;
+     args.pwsrc.fd=0;
++    args.duo_option = "1";
+ 
+ #define VIRGIN_PWTYPE if( args.pwtype!=PWT_STDIN ) { \
+     fprintf(stderr, "Conflicting password source\n"); \
+@@ -129,6 +132,9 @@ static int parse_options( int argc, char *argv[] )
+             args.pwtype=PWT_FD;
+             args.pwsrc.fd=atoi(optarg);
+             break;
++        case 'o':
++            args.duo_option = optarg;
++            break;
+         case 'p':
+             // Password is given on the command line
+             VIRGIN_PWTYPE;
+@@ -401,11 +407,13 @@ int handleoutput( int fd )
+ {
+     // We are looking for the string
+     static int prevmatch=0; // If the "password" prompt is repeated, we have the wrong password.
+-    static int state1, state2, state3;
++    static int seenduo = 0; // Aready detected a DUO prompt, avoids looping
++    static int state1, state2, state3, state4;
+     static int firsttime = 1;
+     static const char *compare1=PASSWORD_PROMPT; // Asking for a password
+     static const char compare2[]="The authenticity of host "; // Asks to authenticate host
+     static const char compare3[] = "differs from the key for the IP address"; // Key changes
++    static const char compare4[] = "asscode"; // DUO prompt
+     // static const char compare3[]="WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!"; // Warns about man in the middle attack
+     // The remote identification changed error is sent to stderr, not the tty, so we do not handle it.
+     // This is not a problem, as ssh exists immediately in such a case
+@@ -462,6 +470,17 @@ int handleoutput( int fd )
+         }
+     }
+ 
++    if (seenduo == 0) {
++        state4 = match(compare4, buffer, numread, state4);
++        if (compare4[state4] == '\0') {
++            if (args.verbose)
++                fprintf(stderr, "SSHPASS: detected duo prompt, sending option\n");
++            reliable_write(fd, args.duo_option, strlen(args.duo_option));
++            reliable_write(fd, "\n", 1);
++            seenduo = 1;
++        }
++    }
++
+     return ret;
+ }
+ 
